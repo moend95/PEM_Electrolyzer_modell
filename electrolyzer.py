@@ -1,25 +1,18 @@
-import math
-import numpy as np
-import scipy
-import pandas as pd
-from scipy.signal import tf2ss, cont2discrete
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from scipy.interpolate import interp1d
-from scipy.optimize import minimize_scalar
-from scipy.optimize import fsolve
 
 
 class electrolyzer:
 
-    def __init__(self, P_elektrolyseur_, unit_P, dt_1, unit_dt, p2, production_H2_, unit_production_H2):
-
-        # P_elektrolyseur_       :Electrolyzer power not yet converted.
-        # unit_P                 :Unit Elektrolyzer
-        # dt_1                   :Timestep not yet converted
-        # unit_dt                :Unit Timestep
-        # p2                     :Compression pressure
-        # production_H2_         :Hydrogen mass to be produced (time calculation).
-        # unit_production_H2     : Unit Hydrogen mass to be produced (time calculation)
+    def __init__(self, P_elektrolyseur, dt_1, unit_dt, p2):
+        '''
+        :param P_elektrolyseur: Electrolyzer electrical input Power in kW
+        :param dt_1: Timestep
+        :param unit_dt: Unit Timestep: h, min, s
+        :param p2: Compression pressure in bar
+        '''
 
         # Constants
         self.F = 96485.34  # Faraday's constant [C/mol]
@@ -33,20 +26,15 @@ class electrolyzer:
         self.roh_H2 = 0.08988  # Density in kg/m3
         self.roh_O = 1.429  # Density kg/m3
         self.T = 50  # Grad Celsius
-        self.p2 = p2  # bar compression
 
-        self.P_elektrolyseur_ = P_elektrolyseur_  # kW
-        self.P_elektrolyseur = P_elektrolyseur_  # kW
-        self.unit_P = unit_P  # kW
-        self.dt_1 = dt_1  # time(s/h/d)
+        self.P_elektrolyseur = P_elektrolyseur  # kW
+        self.dt = dt_1  # time(s/h/d)
         self.unit_dt = unit_dt  # (s/h/d)
         self.p2 = p2  # bar
-        self.production_H2_ = production_H2_  # weight
-        self.unit_production_H2 = unit_production_H2  # weight (g,kg,t)
 
-        self.kontrolle()  # Checks the input and provides an error message if necessary
+        #self.kontrolle()  # Checks the input and provides an error message if necessary
 
-        self.P_nominal = self.P_elektrolyseur  # kW
+        self.P_nominal = float(self.P_elektrolyseur)  # kW
         self.P_min = self.P_nominal * 0.1  # kW   minimum power Elektrolyzer
         self.P_max = self.P_nominal  # kW   maximum power Elektrolyzer
 
@@ -60,172 +48,147 @@ class electrolyzer:
 
         self.p_atmo = 101325  # 2000000  # (Pa) atmospheric pressure / pressure of water
         self.p_anode = self.p_atmo  # (Pa) pressure at anode, assumed atmo
-        self.dt = 1.0
-    def kontrolle(self):
-        # the various inputs are checked
-        # If incorrect inputs are provided, error messages will be issued
-        # ----------------------------------------------------------------
-        # Check whether the performance of the electrolyzer and the time step are a number or a decimal. If not, an error message will be displayed
-        try:
-            self.P_elektrolyseur = float(self.P_elektrolyseur)
-        except ValueError:
-            raise ValueError("Please check the input for the electrolyzer size. It should be numbers or decimals.")
 
-        try:
-            self.dt_1 = float(self.dt_1)
-        except ValueError:
-            raise ValueError("Please check the input for the time step. It should be numbers or decimals.")
-
-        # ---------------------------------------------------------------------
-        # Here, the unit of the electrolyzer is being verified
-        # units_P: W, KW, MW, GW  Units of the ELektrolyzer
-
-        if self.unit_P.lower() == "w":  # W
-            self.P_elektrolyseur = self.P_elektrolyseur / 1000
-            self.unit_P_2 = "W"
-        elif self.unit_P.lower() == "kw":  # kW
-            self.P_elektrolyseur = self.P_elektrolyseur
-            self.unit_P_2 = "KW"
-        elif self.unit_P.lower() == "mw":  # mW
-            self.P_elektrolyseur = self.P_elektrolyseur * 1000
-            self.unit_P_2 = "MW"
-        elif self.unit_P.lower() == "gw":  # gW
-            self.P_elektrolyseur = self.P_elektrolyseur * 1000 * 1000
-            self.unit_P_2 = "GW"
-        else:
-            raise ValueError("Please check the unit of the electrolyzer! Currently, the options are W, kW, MW, GW.")
-            # ----------------------------------------------------------------------
-        # Here, the unit of the time step is being verified.
-        # Units_dt: S, M, H,D     Units of the time step.
-
-        if self.unit_dt.lower() == "s":  # second
-            self.dt = self.dt_1 / 60
-            self.dt_2 = "seconds"
-
-        elif self.unit_dt.lower() == "m":  # minute
-            self.dt = self.dt_1
-            self.dt_2 = "Minutes"
-
-        elif self.unit_dt.lower() == "h":  # hour
-            self.dt = self.dt_1 * 60
-            self.dt_2 = "hours"
-
-        elif self.unit_dt.lower() == "d":  # days
-            self.dt = self.dt_1 * 60 * 24
-            self.dt_2 = "Days"
-
-        else:
-            raise ValueError(
-                "Please verify the unit of time! Currently, the options are S (seconds), M (minutes), H (hours), D (days)")
-            # ------------------------------------------------------------------------------
-        # Pressure verification.
-
-        if self.p2 == "":
-            self.p2 = 0
-        elif not self.p2.isdigit():  # If p2 is not a numerical value, for example, a letter.
-            self.p2 = 0
-        elif int(self.p2) < 30:  # bar
-            raise ValueError("The value of the pressure to be compressed must be greater than 30 bar!")
-        elif int(self.p2) >= 30:  # bar
-            self.p2 = self.p2  # bar
-        else:
-            raise ValueError("Please check the unit of the pressure to be compressed.")
-
-        # ---------------------------------------------------------------------------------
-        # Verification of the time calculation for hydrogen generation
-        # units_H2 G, KG, T,
-
-        self.production_H2 = self.production_H2_
-
-        # If no input is provided for the required hydrogen amount, it will be set to 0 and not displayed. This is part of the function within the 'h2_production_calc' function.
-
-        if self.production_H2_ == "":
-            self.production_H2 = 0
-            self.production_H2_ = 0
-        else:
+        def kontrolle(self):
+            # Check if the performance of the electrolyzer and the time step are numbers.
             try:
-                self.production_H2_ = float(self.production_H2_)
-                self.production_H2 = int(self.production_H2_)
+                self.P_elektrolyseur = float(self.P_elektrolyseur)
             except ValueError:
-                self.production_H2 = 0
-                self.production_H2_ = 0
+                raise ValueError(
+                    "Please check the input for the electrolyzer size. It should be a number or a decimal.")
 
-        if self.unit_production_H2.lower() == "g":  # gramm
-            self.unit_production = self.production_H2
-            self.unit_H2 = "Gramm"
-            self.production_H2 = self.production_H2 / 1000
-        elif self.unit_production_H2.lower() == "kg":  # kilogramm
-            self.production_H2 = self.production_H2
-            self.unit_H2 = "Kilogramm"
-        elif self.unit_production_H2.lower() == "t":  # Tonnen
-            self.production_H2 = self.production_H2 * 1000
-            self.unit_H2 = "Tonnen"
-        elif self.unit_production_H2 == "":
-            self.production_H2 = 0
-            self.production_H2_ = 0
-            self.unit_H2 = ""
+            try:
+                self.dt_1 = float(self.dt_1)
+            except ValueError:
+                raise ValueError("Please check the input for the timestep. It should be a number or a decimal.")
+
+            # Verify the unit of the time step
+            if self.unit_dt.lower() == "s":  # seconds
+                self.dt = self.dt_1
+                self.dt_2 = "seconds"
+            elif self.unit_dt.lower() in ["min", "m"]:  # minutes
+                self.dt = self.dt_1
+                self.dt_2 = "minutes"
+            elif self.unit_dt.lower() in ["h", "hour", "hours"]:
+                self.dt = self.dt_1
+                self.dt_2 = "hours"
+            else:
+                raise ValueError(
+                    "Please verify the unit of time! Currently, the options are 's' (seconds), 'min' (minutes), 'h' (hours)")
+
+            # Pressure verification
+            try:
+                self.p2 = float(self.p2)
+            except ValueError:
+                raise ValueError("Please check the input for the compression pressure. It should be a number.")
+
+            if self.p2 < 30:
+                raise ValueError("The value of the pressure to be compressed must be greater than or equal to 30 bar!")
+
+            # If the power of the electrolyzer is not divisible by 500, an error message will be issued
+            if self.P_elektrolyseur % 500 != 0:
+                raise ValueError(
+                    "The power of the electrolyzer must be in the 500 series, as one stack of the electrolyzer is 500 kW")
+
+            # If everything is correct
+            print("All input parameters are valid.")
+
+    def check_datetime_index(self, df):
+        if isinstance(df.index, pd.DatetimeIndex):
+            return True
         else:
-            raise ValueError(
-                "Please check the unit of the generated hydrogen! Currently, the options are g (grams), kg (kilograms), T (tonnes).")
-        # ----------------------------------------------------------------------------------------------------------------------------------
-        # If the power of the electrolyzer is not divisible by 500, an error message will be issued. Reason: Stack size is fixed at 500 kW.
-        if self.P_elektrolyseur % 500 != 0:
-            raise ValueError(
-                "The power of the electrolyzer must be in the 500 series, as one stack of the electrolyzer is 500 kW")
-            # ------------------------------------------------------------------
+            raise ValueError("Index must be in datetime format.")
 
     def state_codes(self, df):
 
-        # state und Zeit seit statewechsel initialisieren
+        # Daten auf minütliche Auflösung interpolieren
+        self.check_datetime_index(df)
+        df = df.resample('1min').interpolate(method='linear')
+
+        # State logic der Funktion
         df['state'] = 'cold standby'
         df['time_since_state_change'] = 0
-
-        # Vorigen state für den Fall des Zurückfallens von "booting" speichern
         prev_state_before_booting = ""
 
         for i in range(1, len(df)):
-            power = df.loc[i, 'P_ac']
-            prev_state = df.loc[i - 1, 'state']
-            time_since_change = df.loc[i - 1, 'time_since_state_change'] + 1
+            power = df.iloc[i]['P_ac']  # Änderung: Verwende iloc für positionsbasierten Zugriff
+            prev_state = df.iloc[i - 1]['state']
+            time_since_change = df.iloc[i - 1]['time_since_state_change'] + 1
 
             # Logik für statewechsel
             if power >= self.P_min:
                 if prev_state in ['cold standby', 'hot standby']:
                     prev_state_before_booting = prev_state
-                    df.at[i, 'state'] = 'booting'
-                    df.at[i, 'time_since_state_change'] = 1
+                    df.at[df.index[i], 'state'] = 'booting'  # Änderung für iloc
+                    df.at[df.index[i], 'time_since_state_change'] = 1
                 elif prev_state == 'booting' and \
-                        ((prev_state_before_booting == 'cold standby' and time_since_change >= 30) or #30min
-                         (prev_state_before_booting == 'hot standby' and time_since_change >= 15)): #15min
-                    df.at[i, 'state'] = 'h2 production'
-                    df.at[i, 'time_since_state_change'] = 0
-                elif prev_state == 'hot' or prev_state == 'h2 production':
-                    df.at[i, 'state'] = 'h2 production'
-                    df.at[i, 'time_since_state_change'] = 0 if prev_state == 'hot' else time_since_change
+                        ((prev_state_before_booting == 'cold standby' and time_since_change >= 30) or
+                         (prev_state_before_booting == 'hot standby' and time_since_change >= 15)):
+                    df.at[df.index[i], 'state'] = 'h2 production'
+                    df.at[df.index[i], 'time_since_state_change'] = 0
+                elif prev_state in ['hot', 'h2 production']:
+                    df.at[df.index[i], 'state'] = 'h2 production'
+                    df.at[df.index[i], 'time_since_state_change'] = 0 if prev_state == 'hot' else time_since_change
                 else:
-                    df.at[i, 'state'] = prev_state
-                    df.at[i, 'time_since_state_change'] = time_since_change
+                    df.at[df.index[i], 'state'] = prev_state
+                    df.at[df.index[i], 'time_since_state_change'] = time_since_change
             else:
                 if prev_state == 'booting':
-                    # Fall zurück zu cold standby, wenn während des Bootings die Mindestleistung unterschritten wird
-                    df.at[i, 'state'] = 'cold standby'
-                    df.at[i, 'time_since_state_change'] = 0
+                    df.at[df.index[i], 'state'] = 'cold standby'
+                    df.at[df.index[i], 'time_since_state_change'] = 0
                 elif prev_state == 'h2 production':
-                    df.at[i, 'state'] = 'hot'
-                    df.at[i, 'time_since_state_change'] = 0
+                    df.at[df.index[i], 'state'] = 'hot'
+                    df.at[df.index[i], 'time_since_state_change'] = 0
                 elif prev_state == 'hot' and time_since_change > 4:
-                    df.at[i, 'state'] = 'hot standby'
-                    df.at[i, 'time_since_state_change'] = 0
-                elif prev_state == 'hot standby' and time_since_change >= 55: #55min
-                    df.at[i, 'state'] = 'cold standby'
-                    df.at[i, 'time_since_state_change'] = 0
+                    df.at[df.index[i], 'state'] = 'hot standby'
+                    df.at[df.index[i], 'time_since_state_change'] = 0
+                elif prev_state == 'hot standby' and time_since_change >= 55:
+                    df.at[df.index[i], 'state'] = 'cold standby'
+                    df.at[df.index[i], 'time_since_state_change'] = 0
                 else:
-                    # Bleibt im aktuellen state, wenn keine andere Bedingung erfüllt ist
-                    df.at[i, 'state'] = prev_state
-                    df.at[i, 'time_since_state_change'] = time_since_change if prev_state != 'cold standby' else 0
+                    df.at[df.index[i], 'state'] = prev_state
+                    df.at[df.index[i], 'time_since_state_change'] = time_since_change
+
         df.drop(['time_since_state_change'], axis=1, inplace=True)
 
+        # Zurück-Interpolation auf die ursprüngliche Frequenz
+        df = df.resample(f'{self.dt}{self.unit_dt}').interpolate(method='linear')
+
         return df
+
+    def power_electronics(self, P_ac, P_nominal):
+        '''
+        P_nominal: Electrolyzer Size in kW
+        P_ac: P_ac in kW
+        P_electronics: Self-consumption power electronics in kW
+        '''
+        # definition of the
+        relative_performance = [0.0, 0.09, 0.12, 0.15, 0.189, 0.209, 0.24, 0.3, 0.4, 0.54, 0.7, 1.0]
+        eta = [0.85, 0.90, 0.918, 0.93, 0.935, 0.94, 0.944, 0.95, 0.955, 0.96, 0.963, 0.967]
+        # Interpolationsfunktion erstellen
+        f_eta = interp1d(relative_performance, eta)
+
+        # Eigenverbrauch berechnen
+        # print(P_ac)
+        # print(P_nominal)
+        if P_ac < P_nominal:  # Funktion hinzugefügt da probleme wenn die eingangsleistung gegen null geht
+            P_ac = P_nominal
+        eta_interp = f_eta(P_nominal / P_ac)  # Interpoliere den eta-Wert
+        # print(eta_interp)
+        P_electronics = P_nominal * (1 - eta_interp)  # Berechne den Eigenverbrauch
+        #plt.plot(relative_performance, eta, linestyle='-')
+        #plt.show()
+        return P_electronics
+    def power_dc(self, P_ac):
+        '''
+        :param P_ac:
+        :return:
+        '''
+
+        P_dc = P_ac - self.power_electronics(P_ac, self.stack_nominal() / 100)
+
+        return P_dc
+
 
     def calc_cell_voltage(self, I, T):
         """
@@ -360,53 +323,17 @@ class electrolyzer:
 
         return eta_f
 
-    def power_electronics(self, P_ac, P_nominal):
-        '''
-        P_nominal: Electrolyzer Size in kW
-        P_ac: P_ac
-        P_electronics: Self-consumption power electronics in kW
-        '''
-        # definition of the
-        relative_performance = [0.0, 0.09, 0.12, 0.15, 0.189, 0.209, 0.24, 0.3, 0.4, 0.54, 0.7, 1.0]
-        eta = [0.85, 0.90, 0.918, 0.93, 0.935, 0.94, 0.944, 0.95, 0.955, 0.96, 0.963, 0.967]
-        # Interpolationsfunktion erstellen
-        f_eta = interp1d(relative_performance, eta)
-
-        # Eigenverbrauch berechnen
-        # print(P_ac)
-        # print(P_nominal)
-        if P_ac < P_nominal:  # Funktion hinzugefügt da probleme wenn die eingangsleistung gegen null geht
-            P_ac = P_nominal
-        eta_interp = f_eta(P_nominal / P_ac)  # Interpoliere den eta-Wert
-        # print(eta_interp)
-        P_electronics = P_nominal * (1 - eta_interp)  # Berechne den Eigenverbrauch
-        #plt.plot(relative_performance, eta, linestyle='-')
-        #plt.show()
-        return P_electronics
-
-    def power_dc(self, P_ac):
-        '''
-        :param P_ac:
-        :return:
-        '''
-        # print(self.stack_nominal()/100)
-        P_dc = P_ac - self.power_electronics(P_ac, self.stack_nominal() / 100)
-
-        # P_dc = P_ac - self.power_electronics(P_ac, self.P_nominal/100)
-
-        return P_dc
 
     def calc_H2_mfr(self, P_dc):
         """
-        P_in [KW] [kWdc]: stack power input
-        return :: H2_mfr [kg/dt]: hydrogen mass flow rate
+        P_dc [KW/dt] [kWdc]: stack power input, dircet current, each time step dt
+        return :: H2_mfr [(kg/h)/dt]: hydrogen mass flow rate in kg each time step dt
         """
-
         I = self.calculate_cell_current(P_dc)  # A
         eta_F = self.calc_faradaic_efficiency(I)
-        mfr = (eta_F * I * self.M * self.n_cells * self.n_stacks) / (self.n * self.F)  # self.n_stacks hinzugefügt
+        mfr = (eta_F * I * self.M * self.n_cells * self.n_stacks) / (self.n * self.F)  # [(A*g/mol)/(C/mol)=g/s]
 
-        H2_mfr = (mfr * self.dt*3600) / 1000  # kg/dt
+        H2_mfr = (mfr / 1000 ) * 3600  # g/s to [kg/h]/dt
 
         return H2_mfr
 
@@ -440,7 +367,7 @@ class electrolyzer:
         :return:
         '''
         M_H2 = 2.016 * 10 ** -3  # kg/mol Molare Masse H2
-        nH2 = (H2_mfr / 3600*(self.dt)) / M_H2  # kg/dt in kg/s in mol/s
+        nH2 = (H2_mfr / 3600) / M_H2  # kg/dt in kg/s in mol/s
         cp_H2 = 14300  # J/kg*K Wärmekapazität H2
 
         X_in = 0.1  # Mol H2O/Mol H2
@@ -507,7 +434,7 @@ class electrolyzer:
         return: q_loss in kW min /dt
                 q_H20_fresh in kW min /dt
         '''
-        c_pH2O = (0.001162) / (self.dt)  # kW min/kg*k / dt
+        c_pH2O = 0.001162 # kW min/kg*k / dt
         dT = self.T - 20  # operate temp. - ambient temp. (ambient temp. = constant)
 
         q_H2O_fresh = c_pH2O * H2O_mfr * dT  # multyplied with 1.5 for transport water # [kW min/dt]
@@ -521,7 +448,7 @@ class electrolyzer:
         return: mfr cooling water in kg/dt
         '''
 
-        c_pH2O = (0.001162*60) / (self.dt)  # kW/kg*k
+        c_pH2O = 0.001162*60 # kW/kg*k
         # operate temperature - should temperature
 
         mfr_cool = (q_sys)/ (c_pH2O * (10))
@@ -564,107 +491,288 @@ class electrolyzer:
 
         return P_gesamt, P_pump_fresh, P_pump_cool  # kw
 
+    def calculate_data_table(self, df):
 
-    def run(self, df):
-        df = self.state_codes(df)
+        df = self.state_codes(df) #Determine the mode of the electrolyzer
+
+
+
+        # for col in [
+        #     'hydrogen production [(Kg/h)/dt]', 'surplus electricity [kW/dt]',
+        #     'H20 [(Kg/h)/dt]', 'Oxygen [(Kg/h)/dt]', 'heat system [kW/dt]',
+        #     'heat system [%]', 'cooling Water [(kg/h)/dt]', 'electronics [kW]',
+        #     'electronics [%]', 'gasdrying [kW]', 'gasdrying [%]', 'pump [kW]',
+        #     'pump [%]', 'efficency [%]', 'booting power [(kW)/dt]'
+        # ]:
+        #     df[col] = 0.0
 
         for i in range(len(df.index)):
-            P_in = df.loc[df.index[i], 'P_ac']
-            if df.loc[df.index[i], 'state'] == 'h2 production':
-                if P_in > self.stack_nominal() * 1:
-                    if P_in > self.stack_nominal() * 2:
-                        if P_in >= self.stack_nominal() * 3:
-                            if P_in >= self.stack_nominal() * 4:  # P_in bigger than electrolyzer
-                                df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
-                                df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
-                                df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
-                                df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
-                                df.loc[df.index[i], 'Surplus power [kW]'] = P_in - (self.stack_nominal() * 4)
-                            else:  # P_in between Stack 3 and 4
-                                P_distributed = (P_in) / 4
-                                df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                                df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                                df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                                df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                                df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
-                        else:  # P_in between Stack  2 and 3
-                            P_distributed = (P_in) / 3
-                            df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                            df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                            df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                            df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = 0.0
-                            df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
-                    else:  # P_in between Stack 1 and 2
-                        P_distributed = P_in / 2
-                        df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                        df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
-                        df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = 0.0
-                        df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = 0.0
-                        df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
-                else:  # P_in < stack_nominal
-                    df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_in)
-                    df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = 0.0
-                    df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = 0.0
-                    df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = 0.0
-                    df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
+            if df.loc[df.index[i], 'state'] == 'h2 production': #check, if state=h2 production
+                if df.loc[df.index[i], 'P_ac'] <= self.P_nominal: # If the input power is less than the electrolyzer power, electrolyzer operate in partial load
+                    df.loc[df.index[i], 'hydrogen production [(Kg/h)/dt]'] = self.calc_H2_mfr(df.loc[df.index[i], 'P_ac']) # hydrogen flow in kg/h each time step
+                else:
+                    df.loc[df.index[i], 'hydrogen production [(Kg/h)/dt]'] = self.calc_H2_mfr(self.P_nominal) # electrolyzer operate in full load
 
-                # #If the input power is less than the electrolyzer power.
-                # if df.loc[df.index[i], 'P_ac'] <= self.P_nominal:
-                #     # hydrogen [kg/dt]
-                #     df.loc[df.index[i], 'hydrogen production [Kg/dt]'] = self.calc_H2_mfr(df.loc[df.index[i], 'P_ac'])
-                # else:
-                #     # hydrogen [kg/dt]
-                #     df.loc[df.index[i], 'hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.P_nominal)
+                    surplus_electricity = df.loc[df.index[i], 'P_ac'] - self.P_nominal
+                    df.loc[df.index[i], 'surplus electricity [kW/dt]'] = round(surplus_electricity, 2) # surplus electricity, which can't used for hydrocen production in kW each time step
+
+                # educt water
+                df.loc[df.index[i], 'H20 [(Kg/h)/dt]'] = self.calc_H2O_mfr(
+                    df.loc[df.index[i], 'hydrogen production [(Kg/h)/dt]']) #mass flow of water in kg/h each times step
+
+                # oxygen
+                df.loc[df.index[i], 'Oxygen [(Kg/h)/dt]'] = self.calc_O_mfr(
+                    df.loc[df.index[i], 'hydrogen production [(Kg/h)/dt]']) #mass flow of oxygen in kg/h each time step
+
+                # heat system
+                df.loc[df.index[i], 'heat system [kW/dt]'] = self.heat_sys(self.heat_stack(df.loc[df.index[i], 'P_ac']),
+                                                                        df.loc[df.index[i], 'H20 [(Kg/h)/dt]'])
+                df.loc[df.index[i], 'heat system [%]'] = (df.loc[df.index[i], 'heat system [kW/dt]'] /
+                                                          df.loc[df.index[i], 'P_ac']) * 100
+
+                # cooling water
+                cooling_water = self.calc_mfr_cool(df.loc[df.index[i], 'heat system [kW/dt]'])
+                df.loc[df.index[i], 'cooling Water [(kg/h)/dt]'] = round(cooling_water, 2) #mass flow of cooling water in kg/h each time step
+
+                #power electronics
+                df.loc[df.index[i], 'electronics [kW]'] = self.power_electronics(self.P_nominal,
+                                                                                 df.loc[df.index[i], 'P_ac'])
+                df.loc[df.index[i], 'electronics [%]'] = (df.loc[df.index[i], 'electronics [kW]'] /
+                                                          df.loc[df.index[i], 'P_ac']) * 100
+
+                # gasdrying
+                df.loc[df.index[i], 'gasdrying [kW]'] = self.gas_drying(
+                    df.loc[df.index[i], 'hydrogen production [(Kg/h)/dt]'])
+                df.loc[df.index[i], 'gasdrying [%]'] = (df.loc[df.index[i], 'gasdrying [kW]'] /
+                                                        df.loc[df.index[i], 'P_ac']) * 100
+
+                # pump
+                df.loc[df.index[i], 'pump [kW]'] = self.calc_pump(df.loc[df.index[i], 'H20 [(Kg/h)/dt]'],
+                                                                  df.loc[df.index[i], 'P_ac'])[0]
+                df.loc[df.index[i], 'pump [%]'] = (df.loc[df.index[i], 'pump [kW]'] / df.loc[
+                    df.index[i], 'P_ac']) * 100
+
+                # efficency [%]
+                df.loc[df.index[i], 'efficency [%]'] = ((df.loc[df.index[
+                    i], 'hydrogen production [(Kg/h)/dt]'] * self.lhv) /
+                                                        (df.loc[df.index[i], 'P_ac'] +
+                                                         df.loc[df.index[i], 'pump [kW]'] +
+                                                         df.loc[df.index[i], 'gasdrying [kW]'] +
+                                                         df.loc[df.index[i], 'electronics [kW]'])) # Todo: check, if power electronics 2x in efficency
+
+            #             # compression [%]
+            #             compression_KW = self.compression(df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+            #             df.loc[df.index[i], 'compression [%]'] = round(
+            #                 (compression_KW / df.loc[df.index[i], 'P_ac']) * 100, 2)
+            #
+            #             # efficency with compression [%]
+            #             efficency_with_compression = (((df.loc[df.index[i], 'hydrogen production [Kg/dt]'] * self.lhv * (
+            #                         60 / self.dt)) / df.loc[df.index[i], 'P_ac']) * 100) - df.loc[
+            #                                              df.index[i], 'gasdrying {%]'] - df.loc[df.index[i], 'pump [%]'] - \
+            #                                          df.loc[df.index[i], 'compression [%]'] - df.loc[
+            #                                              df.index[i], 'electronics [%]']
+            #             df.loc[df.index[i], 'efficency _c [%]'] = round(efficency_with_compression, 2)
+
+            # ---------------------------------------------------------------------------------------------------------------------------------------------
+
+            # If
+            elif df.loc[df.index[i], 'state'] == 'booting':
+                df.loc[df.index[i], 'hydrogen production [(Kg/h)/dt]'] = 0.0
+                df.loc[df.index[i], 'booting power [(kW)/dt]'] = self.P_nominal*(1/8) #1/8 of Nominal Power is needed to booting up the syste. todo: verify this thesis, not yet publishable
+
+            else:
+
+                # surplus electricity [kW]
+                df.loc[df.index[i], 'surplus electricity [kW/dt]'] = df.loc[df.index[i], 'P_ac']
+
+
+                # ------------------------------------------------------------------------------------------------------------------------------
+                # losses
+
+                # # electrolyzer [%]
+                # electrolyzer = 100 - (((df.loc[df.index[i], 'hydrogen production [Kg/dt]'] * self.lhv * (
+                #         60 / self.dt)) / self.P_nominal) * 100)
+                # df.loc[df.index[i], 'electrolyzer {%]'] = round(electrolyzer)
                 #
-                # #H20  [kg/dt] # Input
-                # df.loc[df.index[i], 'H20 [kg/dt]'] = self.calc_H2O_mfr(df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+                # # gasdrying [%]
+                # gasdrying_KW = self.gas_drying(df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+                # df.loc[df.index[i], 'gasdrying {%]'] = round((gasdrying_KW / self.P_nominal) * 100, 2)
                 #
-                # # oxygen [kg/dt]
-                # df.loc[df.index[i], 'Oxygen [kg/dt]'] = self.calc_O_mfr(df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+                # # pump  [%]
+                # pump_KW = self.calc_pump(df.loc[df.index[i], 'H20 [kg/dt]'], self.P_nominal)
+                # df.loc[df.index[i], 'pump [%]'] = round((pump_KW / self.P_nominal) * 100, 2)
+                #
+                # # electronics [%]
+                # electronics = self.power_electronics(self.P_nominal, self.P_nominal)
+                # df.loc[df.index[i], 'electronics [%]'] = round((electronics / self.P_nominal) * 100, 2)
+                #
+                # # heat_cell [%]
+                # Heat_Cell_kW = self.heat_cell(self.P_nominal)
+                # df.loc[df.index[i], 'Heat Cell [%]'] = round((Heat_Cell_kW / self.P_nominal) * 100, 2)
                 #
                 # # heat system [%]
-                # df.loc[df.index[i], 'heat system [kW]'] = self.heat_sys(self.heat_stack(df.loc[df.index[i], 'P_ac']),
-                #                                                         df.loc[df.index[i], 'H20 [kg/dt]'])
-                # df.loc[df.index[i], 'heat system [%]'] = (df.loc[df.index[i], 'heat system [kW]']/
-                #                                           df.loc[df.index[i], 'P_ac']) * 100
+                # heat_system_KW = self.heat_sys(Heat_Cell_kW, df.loc[df.index[i], 'H20 [kg/dt]'])
+                # df.loc[df.index[i], 'heat system [%]'] = round((heat_system_KW / self.P_nominal) * 100, 2)
+                #
+                # # compression [%]
+                # compression_KW = self.compression(df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+                # df.loc[df.index[i], 'compression [%]'] = round((compression_KW / self.P_nominal) * 100, 2)
                 #
                 # # cooling_water [kg/dt]
-                # cooling_water = self.calc_mfr_cool(df.loc[df.index[i], 'heat system [kW]'])
+                # cooling_water = self.calc_mfr_cool(heat_system_KW)
                 # df.loc[df.index[i], 'cooling Water [kg/dt]'] = round(cooling_water, 2)
+                # # ---------------------------------------------------------------------------------------------------------------------------------------
+                # # efficiency [%]
+                # efficiency = (((df.loc[df.index[i], 'hydrogen production [Kg/dt]'] * self.lhv * (
+                #         60 / self.dt)) / self.P_nominal) * 100) - df.loc[df.index[i], 'gasdrying {%]'] - df.loc[
+                #                  df.index[i], 'pump [%]'] - df.loc[df.index[i], 'electronics [%]']
+                # df.loc[df.index[i], 'efficiency [%]'] = round(efficiency, 2)
                 #
-                # # power electronics
-                # df.loc[df.index[i], 'electronics [kW]'] = self.power_electronics(self.P_nominal,
-                #                                                                      df.loc[df.index[i], 'P_ac'])
-                # df.loc[df.index[i], 'electronics [%]'] = (df.loc[df.index[i], 'electronics [kW]'] /
-                #                                               df.loc[df.index[i], 'P_ac']) * 100
-                #
-                # # gasdrying
-                # df.loc[df.index[i], 'gasdrying [kW]'] = self.gas_drying(
-                #         df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
-                # df.loc[df.index[i], 'gasdrying [%]'] = (df.loc[df.index[i], 'gasdrying [kW]'] /
-                #                                             df.loc[df.index[i], 'P_ac']) * 100
-                #
-                # # pump
-                # df.loc[df.index[i], 'pump [kW]'] = self.calc_pump(df.loc[df.index[i], 'H20 [kg/dt]'],
-                #                                                       df.loc[df.index[i], 'P_ac'])[0]
-                # df.loc[df.index[i], 'pump [%]'] = (df.loc[df.index[i], 'pump [kW]'] / df.loc[
-                #         df.index[i], 'P_ac']) * 100
-                #
-                # # efficency [%]
-                # df.loc[df.index[i], 'efficency [%]'] = ((df.loc[df.index[
-                #         i], 'hydrogen production [Kg/dt]'] * self.lhv) /
-                #                                         (df.loc[df.index[i], 'P_ac'] +
-                #                                          df.loc[df.index[i], 'pump [kW]'] +
-                #                                          df.loc[df.index[i], 'gasdrying [%]'] +
-                #                                          df.loc[df.index[i], 'electronics [kW]']))
-                # # specific energy consumption
-                # df.loc[df.index[i], 'spec. energy consumption [kWh/m3]'] = ((df.loc[df.index[i], 'P_ac'] +
-                #                                                             df.loc[df.index[i], 'pump [kW]'] +
-                #                                                             df.loc[df.index[i], 'gasdrying [%]'] +
-                #                                                             df.loc[df.index[i], 'electronics [kW]']) /
-                #                                                             (df.loc[df.index[i], 'hydrogen production [Kg/dt]']/self.roh_H2))
+                # # efficency with compression [%]
+                # efficency_with_compression = (((df.loc[df.index[i], 'hydrogen production [Kg/dt]'] * self.lhv * (
+                #         60 / self.dt)) / self.P_nominal) * 100) - df.loc[df.index[i], 'gasdrying {%]'] - df.loc[
+                #                                  df.index[i], 'pump [%]'] - df.loc[df.index[i], 'compression [%]'] - \
+                #                              df.loc[df.index[i], 'electronics [%]']
+                # df.loc[df.index[i], 'efficency _c [%]'] = round(efficency_with_compression, 2)
+                # ---------------------------------------------------------------------------------------------------------------------------------------------
+                # required_power [kW/dt]
 
+        # if df.loc[df.index[i], 'P_ac'] <= self.P_nominal:
+        #     df.loc[df.index[i], 'Electrolyzer'] = round(df.loc[df.index[i], 'P_in without losses [KW]'], 2)
+        #
+        # else:
+        #     df.loc[df.index[i], 'Electrolyzer'] = round(self.P_nominal + (
+        #             df.loc[df.index[i], 'P_in without losses [KW]'] - df.loc[df.index[i], 'P_ac']), 2)
+        #
+        #     # -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        #     # Deducdf pump, gas drying, and compression from the next time step.
+        # if i < (len(df.index) - 1):
+        #
+        #     df.loc[df.index[i + 1], 'P_ac'] = round(
+        #         df.loc[df.index[i + 1], 'P_ac'] - (pump_KW + compression_KW + gasdrying_KW), 2)
+        #
+        #     if df.loc[df.index[i + 1], 'P_ac'] <= 0:
+        #         df.loc[df.index[i + 1], 'P_ac'] = 0
+        # # ----------------------------------------------------------------------------------------------------------------------------------------------------------
+        # # Startup
+        #     elif df.loc[df.index[i], 'state'] == 'booting':
+        #         df.loc[df.index[i], 'surplus electricity [kW]'] = df.loc[df.index[
+        #             i], 'P_ac'] - 0.0085 * self.P_nominal
+            # df.loc[df.index[i], 'Electrolyzer' ]=round((df.loc[df.index[i], 'P_in without losses [KW]']-df.loc[df.index[i], 'P_ac']),2)
 
+        # -----------------------------------------------------------------------------------------------------------------------
+        # Hydrogen production/volume calculation of compressed hydrogen.
+        # -------------------------------------------------------------------------------------------------------------------------
+        # Sedf efficiency_c to 0 if p2 equals 0.
         df.fillna(0.0, inplace=True)
 
+
         return df
+
+
+# todo: calculate hydrogen each stack/module
+
+# def calculate_stack_perfomance(self, df):
+#         df = self.state_codes(df)
+#
+#         for i in range(len(df.index)):
+#             P_in = df.loc[df.index[i], 'P_ac']
+#             if df.loc[df.index[i], 'state'] == 'h2 production':
+#                 if P_in > self.stack_nominal() * 1:
+#                     if P_in > self.stack_nominal() * 2:
+#                         if P_in >= self.stack_nominal() * 3:
+#                             if P_in >= self.stack_nominal() * 4:  # P_in bigger than electrolyzer
+#                                 df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
+#                                 df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
+#                                 df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
+#                                 df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.stack_nominal())
+#                                 df.loc[df.index[i], 'Surplus power [kW]'] = P_in - (self.stack_nominal() * 4)
+#                             else:  # P_in between Stack 3 and 4
+#                                 P_distributed = (P_in) / 4
+#                                 df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                                 df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                                 df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                                 df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                                 df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
+#                         else:  # P_in between Stack  2 and 3
+#                             P_distributed = (P_in) / 3
+#                             df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                             df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                             df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                             df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = 0.0
+#                             df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
+#                     else:  # P_in between Stack 1 and 2
+#                         P_distributed = P_in / 2
+#                         df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                         df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_distributed)
+#                         df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = 0.0
+#                         df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = 0.0
+#                         df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
+#                 else:  # P_in < stack_nominal
+#                     df.loc[df.index[i], 'Stack 1 hydrogen production [Kg/dt]'] = self.calc_H2_mfr(P_in)
+#                     df.loc[df.index[i], 'Stack 2 hydrogen production [Kg/dt]'] = 0.0
+#                     df.loc[df.index[i], 'Stack 3 hydrogen production [Kg/dt]'] = 0.0
+#                     df.loc[df.index[i], 'Stack 4 hydrogen production [Kg/dt]'] = 0.0
+#                     df.loc[df.index[i], 'Surplus power [kW]'] = 0.0
+#
+#                 # #If the input power is less than the electrolyzer power.
+#                 # if df.loc[df.index[i], 'P_ac'] <= self.P_nominal:
+#                 #     # hydrogen [kg/dt]
+#                 #     df.loc[df.index[i], 'hydrogen production [Kg/dt]'] = self.calc_H2_mfr(df.loc[df.index[i], 'P_ac'])
+#                 # else:
+#                 #     # hydrogen [kg/dt]
+#                 #     df.loc[df.index[i], 'hydrogen production [Kg/dt]'] = self.calc_H2_mfr(self.P_nominal)
+#                 #
+#                 # #H20  [kg/dt] # Input
+#                 # df.loc[df.index[i], 'H20 [kg/dt]'] = self.calc_H2O_mfr(df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+#                 #
+#                 # # oxygen [kg/dt]
+#                 # df.loc[df.index[i], 'Oxygen [kg/dt]'] = self.calc_O_mfr(df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+#                 #
+#                 # # heat system [%]
+#                 # df.loc[df.index[i], 'heat system [kW]'] = self.heat_sys(self.heat_stack(df.loc[df.index[i], 'P_ac']),
+#                 #                                                         df.loc[df.index[i], 'H20 [kg/dt]'])
+#                 # df.loc[df.index[i], 'heat system [%]'] = (df.loc[df.index[i], 'heat system [kW]']/
+#                 #                                           df.loc[df.index[i], 'P_ac']) * 100
+#                 #
+#                 # # cooling_water [kg/dt]
+#                 # cooling_water = self.calc_mfr_cool(df.loc[df.index[i], 'heat system [kW]'])
+#                 # df.loc[df.index[i], 'cooling Water [kg/dt]'] = round(cooling_water, 2)
+#                 #
+#                 # # power electronics
+#                 # df.loc[df.index[i], 'electronics [kW]'] = self.power_electronics(self.P_nominal,
+#                 #                                                                      df.loc[df.index[i], 'P_ac'])
+#                 # df.loc[df.index[i], 'electronics [%]'] = (df.loc[df.index[i], 'electronics [kW]'] /
+#                 #                                               df.loc[df.index[i], 'P_ac']) * 100
+#                 #
+#                 # # gasdrying
+#                 # df.loc[df.index[i], 'gasdrying [kW]'] = self.gas_drying(
+#                 #         df.loc[df.index[i], 'hydrogen production [Kg/dt]'])
+#                 # df.loc[df.index[i], 'gasdrying [%]'] = (df.loc[df.index[i], 'gasdrying [kW]'] /
+#                 #                                             df.loc[df.index[i], 'P_ac']) * 100
+#                 #
+#                 # # pump
+#                 # df.loc[df.index[i], 'pump [kW]'] = self.calc_pump(df.loc[df.index[i], 'H20 [kg/dt]'],
+#                 #                                                       df.loc[df.index[i], 'P_ac'])[0]
+#                 # df.loc[df.index[i], 'pump [%]'] = (df.loc[df.index[i], 'pump [kW]'] / df.loc[
+#                 #         df.index[i], 'P_ac']) * 100
+#                 #
+#                 # # efficency [%]
+#                 # df.loc[df.index[i], 'efficency [%]'] = ((df.loc[df.index[
+#                 #         i], 'hydrogen production [Kg/dt]'] * self.lhv) /
+#                 #                                         (df.loc[df.index[i], 'P_ac'] +
+#                 #                                          df.loc[df.index[i], 'pump [kW]'] +
+#                 #                                          df.loc[df.index[i], 'gasdrying [%]'] +
+#                 #                                          df.loc[df.index[i], 'electronics [kW]']))
+#                 # # specific energy consumption
+#                 # df.loc[df.index[i], 'spec. energy consumption [kWh/m3]'] = ((df.loc[df.index[i], 'P_ac'] +
+#                 #                                                             df.loc[df.index[i], 'pump [kW]'] +
+#                 #                                                             df.loc[df.index[i], 'gasdrying [%]'] +
+#                 #                                                             df.loc[df.index[i], 'electronics [kW]']) /
+#                 #                                                             (df.loc[df.index[i], 'hydrogen production [Kg/dt]']/self.roh_H2))
+#
+#
+#         df.fillna(0.0, inplace=True)
+#         print(anzahl
+#         stacks, etc.)
+#         return df
